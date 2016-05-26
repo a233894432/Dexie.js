@@ -1,4 +1,8 @@
-﻿///<reference path="run-unit-tests.html" />
+﻿import Dexie from 'dexie';
+import {module, stop, start, asyncTest, equal, ok} from 'QUnit';
+import {spawnedTest, supports} from './dexie-unittest-utils';
+
+const async = Dexie.async;
 
 module("open", {
     setup: function () {
@@ -11,6 +15,56 @@ module("open", {
     },
     teardown: function () {
         stop(); Dexie.delete("TestDB").then(start);
+    }
+});
+
+let timeout = async(function* (promise, ms) {
+    yield Promise.race([promise, new Promise((resolve,reject)=>setTimeout(()=>reject("timeout"), ms))]);
+});
+
+spawnedTest("multiple db should not block each other", function*(){
+    if (!supports("versionchange")) {
+        ok(true, "SKIPPED - versionchange UNSUPPORTED");
+        return;
+    }
+    let db1 = new Dexie("TestDB"),
+       db2 = new Dexie("TestDB");
+    db1.version(1).stores({
+        foo: 'bar'
+    });
+    db2.version(1).stores({
+        foo: 'bar'
+    });
+    yield db1.open();
+    ok(true, "db1 should open");
+    yield db2.open();
+    ok(true, "db2 should open");
+    try {
+        yield timeout(db1.delete(), 1500);
+        ok(true, "Succeeded to delete db1 while db2 was open");
+    } catch (e) {
+        db1.close();
+        db2.close();
+        ok(false, "Could not delete db1 - " + e);
+    }
+});
+
+spawnedTest("Using db on node should be rejected with MissingAPIError", function*(){
+    let db = new Dexie('TestDB', {
+        indexedDB: undefined,
+        IDBKeyRange: undefined
+    });
+    db.version(1).stores({foo: 'bar'});
+    try {
+        yield db.foo.toArray();
+        ok(false, "Should not get any result because API is missing.");
+    } catch (e) {
+        ok(e instanceof Dexie.MissingAPIError, "Should get MissingAPIError. Got: " + e.name);
+    }
+    try {
+        yield db.open();
+    } catch (e) {
+        ok(e instanceof Dexie.MissingAPIError, "Should get MissingAPIError. Got: " + e.name);
     }
 });
 
@@ -75,7 +129,7 @@ asyncTest("test-if-database-exists", 3, function () {
         // Could open database without specifying any version. An existing database was opened.
         ok(false, "Expected database not to exist but it existed indeed");
         db.close();
-    }).catch(function (err) {
+    }).catch(Dexie.NoSuchDatabaseError, function (err) {
         // An error happened. Database did not exist.
         ok(true, "Database did not exist");
         db = new Dexie("TestDB");
@@ -98,9 +152,9 @@ asyncTest("test-if-database-exists", 3, function () {
     });
 });
 
-asyncTest("open database without specifying version or schema", 10, function () {
+asyncTest("open database without specifying version or schema", Dexie.Observable ? 1 : 10, function () {
     if (Dexie.Observable) {
-        ok(false, "Dexie.Observable currently not compatible with this mode");
+        ok(true, "Dexie.Observable currently not compatible with this mode");
         return start();
     }
     var db = new Dexie("TestDB");
@@ -185,7 +239,7 @@ asyncTest("Issue #76 Dexie inside Web Worker", function () {
     //
     // Imports to include from the web worker:
     //
-    var imports = window.workerImports || ["../src/Dexie.js"];
+    var imports = window.workerImports || ["../dist/dexie.js"];
 
     //
     // Code to execute in the web worker:
@@ -214,7 +268,7 @@ asyncTest("Issue #76 Dexie inside Web Worker", function () {
         }).then(function () {
             ok(true, "Transaction committed");
         }).catch(function(err) {
-            ok(false, "Transaction failed");
+            ok(false, "Transaction failed: " + err.stack);
         }).finally(done);
     }
 
@@ -244,6 +298,12 @@ asyncTest("Issue #76 Dexie inside Web Worker", function () {
             break;
         }
     }
+
+    worker.onerror = function(e) {
+        worker.terminate();
+        ok(false, "Worker errored: " + e.message);
+        start();
+    };
 });
 
 asyncTest("Issue#100 - not all indexes are created", function () {
@@ -285,7 +345,7 @@ asyncTest("Issue#100 - not all indexes are created", function () {
         // it should not exist when failed to open.
         db.close();
         db = new Dexie("TestDB");
-        return db.open(); 
+        return db.open();
     }).then(function() {
         ok(false, "Should not succeed to open the database. It should not have been created.");
         equal(db.tables.length, 0, "At least expect no tables to have been created on the database");
@@ -320,4 +380,74 @@ asyncTest("Dexie.exists", function () {
     }).catch(function(e) {
         ok(false, "Error: " + e);
     }).finally(start);
+});
+
+asyncTest("No auto-open", ()=> {
+    let db = new Dexie("TestDB", {autoOpen: false});
+    db.version(1).stores({foo: "id"});
+    db.foo.toArray(res => {
+        ok(false, "Should not get result. Should have failed.");
+    }).catch(e => {
+        ok(e instanceof Dexie.DatabaseClosedError, "Should catch DatabaseClosedError");
+    }).then(() => {
+        db.open();
+        return db.foo.toArray();
+    }).then(res => {
+        equal(res.length, 0, "Got an answer now when opened.");
+        db.close();
+        let openPromise = db.open().then(()=>{
+            //console.log("Why are we here? " + Dexie.Promise.reject().stack);
+            ok(false, "Should not succeed to open because we closed it during the open sequence.")
+        }).catch(e=> {
+            ok(e instanceof Dexie.DatabaseClosedError, "Got DatabaseClosedError from the db.open() call.");
+        });
+        let queryPromise = db.foo.toArray().then(()=>{
+            ok(false, "Should not succeed to query because we closed it during the open sequence.")
+        }).catch(e=> {
+            ok(e instanceof Dexie.DatabaseClosedError, "Got DatabaseClosedError when querying: " + e);
+        });
+        db.close();
+        return Promise.all([openPromise, queryPromise]);
+    }).catch(e => {
+        ok(false, e);
+    }).finally(start);
+});
+
+asyncTest("db.close", ()=> {
+    let db = new Dexie("TestDB");
+    db.version(1).stores({foo: "id"});
+    db.foo.toArray(res => {
+        equal(res.length, 0, "Database auto-opened and I got a result from my query");
+    }).then(() => {
+        db.close();
+        return db.foo.toArray();
+    }).catch(e => {
+        ok(e instanceof Dexie.DatabaseClosedError, "Should catch DatabaseClosedError");
+        return db.open();
+    }).then(()=>{
+        console.log("The call to db.open() completed");
+        return db.foo.toArray();
+    }).then(res => {
+        equal(res.length, 0, "Database re-opened and I got a result from my query");
+    }).catch(e => {
+        ok(false, e);
+    }).finally(()=>{
+        db.delete().catch(e=>console.error(e)).finally(start);
+    });
+});
+
+spawnedTest("db.open several times", 2, function*(){
+    let db = new Dexie("TestDB");
+    db.version(1).stores({foo: "id"});
+    db.on('populate', ()=>{throw "Failed in populate";});
+    db.open().then(()=>{
+        ok(false, "Should not succeed to open");
+    }).catch(err =>{
+        ok(true, "Got error: " + (err.stack || err));
+    });
+    yield db.open().then(()=>{
+        ok(false, "Should not succeed to open");
+    }).catch(err =>{
+        ok(true, "Got error: " + (err.stack || err));
+    });
 });

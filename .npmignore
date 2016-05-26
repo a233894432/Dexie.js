@@ -1,3 +1,6 @@
-src/
-test/
+**/tmp/
 samples/
+addons/
+*.njsproj
+.*
+*.log

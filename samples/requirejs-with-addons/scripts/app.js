@@ -1,13 +1,13 @@
-﻿///<reference path="require.js" />
+﻿
 require.config({
     paths: {
-        "Dexie": "../../../src/Dexie",
-        "Dexie.Observable": "../../../addons/Dexie.Observable/Dexie.Observable"
+        "dexie": "https://npmcdn.com/dexie/dist/dexie",
+        "dexie-observable": "https://npmcdn.com/dexie-observable/dist/dexie-observable"
     }
 });
 
-requirejs(['Dexie', './console', './db', './ChangeLogger'], function (Dexie, console, db, ChangeLogger) {
-
+requirejs(['dexie', './console', './db', './ChangeLogger'], function (Dexie, console, db, ChangeLogger) {
+    
     console.log("Hello world!");
 
     ChangeLogger(db);

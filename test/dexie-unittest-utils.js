@@ -1,7 +1,12 @@
-﻿/// <reference path="run-unit-tests.html" />
-var no_optimize = window.no_optimize || window.location.search.indexOf('dontoptimize=true') != -1;
+﻿import Dexie from 'dexie';
+import {ok, start, asyncTest} from 'QUnit';
 
-function resetDatabase(db) {
+Dexie.debug = window.location.search.indexOf('longstacks=true') !== -1 ? 'dexie' : false;
+if (window.location.search.indexOf('longstacks=tests') !== -1) Dexie.debug = true; // Don't include stuff from dexie.js.
+
+var no_optimize = window.no_optimize || window.location.search.indexOf('dontoptimize=true') !== -1;
+
+export function resetDatabase(db) {
     /// <param name="db" type="Dexie"></param>
     var Promise = Dexie.Promise;
     return no_optimize || !db._hasBeenCreated ?
@@ -72,7 +77,7 @@ function resetDatabase(db) {
         });
 }
 
-function deleteDatabase(db) {
+export function deleteDatabase(db) {
     var Promise = Dexie.Promise;
     return no_optimize ? db.delete() : db.transaction('rw!', db.tables, function() {
         // Got to do an operation in order for backend transaction to be created.
@@ -85,4 +90,41 @@ function deleteDatabase(db) {
             return trans.tables[tableName].clear();
         }));
     });
+}
+
+var isIE = !(window.ActiveXObject) && "ActiveXObject" in window;
+var isEdge = /Edge\/\d+/.test(navigator.userAgent);
+var hasPolyfillIE = [].slice.call(document.getElementsByTagName("script")).some(
+    s => s.src.indexOf("idb-iegap") !== -1);
+
+export function supports (features) {
+    return features.split('+').reduce((result,feature)=>{
+        switch (feature.toLowerCase()) {
+            case "compound":
+                return result && (hasPolyfillIE || (!isIE && !isEdge)); // Should add Safari to
+            case "multientry":
+                return result && (hasPolyfillIE || (!isIE && !isEdge)); // Should add Safari to
+            case "versionchange": return true;
+                //return result && (!isIE && !isEdge); // Should add Safari to
+            default:
+                throw new Error ("Unknown feature: " + feature);
+        }
+    }, true);
+}
+
+export function spawnedTest (name, num, promiseGenerator) {
+    if (!promiseGenerator) {
+        promiseGenerator = num;
+        asyncTest(name, function(){
+            Dexie.spawn(promiseGenerator)
+                .catch(e => ok(false, e.stack || e))
+                .finally(start);
+        });
+    } else {
+        asyncTest(name, num, function(){
+            Dexie.spawn(promiseGenerator)
+                .catch(e => ok(false, e.stack || e))
+                .finally(start);
+        });
+    }
 }

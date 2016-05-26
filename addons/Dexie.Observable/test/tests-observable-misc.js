@@ -1,5 +1,5 @@
-﻿///<reference path="../../src/Dexie.js" />
-///<reference path="../Dexie.Observable.js" />
+﻿///<reference path="../../dist/dexie.js" />
+///<reference path="../dist/dexie-observable.js" />
 //debugger;
 (function () {
 
